@@ -1,0 +1,9 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"outDir": "dist",
+		"lib": ["DOM", "DOM.Iterable", "ES2022"],
+		"module": "ES2022",
+		"target": "ES2022"
+	}
+}
