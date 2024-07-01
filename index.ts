@@ -22,6 +22,8 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 	const hasClass = (node: Node, cls: string): node is HTMLElement =>
 		isElement(node) && node.classList.contains(cls)
 	const noop = () => {}
+	const getAttr = (el: HTMLElement, attr: string) => el.attributes.getNamedItem(attr)
+	const getAttrVal = (el: HTMLElement, attr: string) => getAttr(el, attr)?.value
 
 	const log = (...v: any[]) => {
 		if (debug) console.log('[WK-KB-FOCUS]', ...v)
@@ -33,6 +35,7 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 		NOTES = 2,
 		POINTER = 3,
 		LESSON_MODAL = 4,
+		WK_OPEN_FRAMEWORK = 5,
 	}
 
 	const state = (() => {
@@ -93,9 +96,10 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 		quizQueue: new WKObserver(),
 		readingNotes: new WKObserver(),
 		turbo: new WKObserver(),
+		wkofDiaglogBg: new WKObserver(),
 	}
 
-	const dispooseAll = () => {
+	const disposeAll = () => {
 		log('Disposing all observers and stopping')
 		Object.values(Observers).forEach((o) => o.dispose())
 	}
@@ -366,10 +370,10 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 		Observers.readingNotes.dispose()
 		Observers.info.init(
 			$subjectInfo,
-			({ attributeName, target, type }) => {
-				if (type !== 'attributes' || attributeName !== 'data-loaded' || !isElement(target)) return
+			({ attributeName, target }) => {
+				if (!attributeName || !isElement(target)) return
 
-				const rawValue = target.attributes.getNamedItem(attributeName)?.value
+				const rawValue = getAttrVal(target, attributeName)
 				const isLoaded = rawValue === 'true'
 
 				if (isLoaded) {
@@ -508,7 +512,7 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 	})()
 
 	const initTurboObserver = ($turboBody: HTMLElement) => {
-		dispooseAll()
+		disposeAll()
 		// FIXME: Maybe interval watch for user input??
 		const updateUserInput = () => {
 			// Main input element for answers
@@ -575,22 +579,84 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 		$modal && initModalObserver($modal)
 	}
 
-	let $lastTurboBody: HTMLElement | null = null
+	const initWkofDialogObserver = ($wkofDialogBg: HTMLElement) => {
+		log('Init WaniKani Open Framework backdrop observer')
 
-	const tryRun = () => {
-		const $turboBody = document.getElementById('turbo-body')
+		const DIALOG_REF_COUNT_ATTR = 'refcnt'
 
-		if ($turboBody) {
-			// If we have the user input, make sure we're running
-			if (Observers.turbo.running && $lastTurboBody === $turboBody) return
+		const tryFocusDialogInput = ($el: HTMLElement) => {
+			const dialogTextInputs = $el.nextElementSibling?.querySelectorAll(
+				'input[type="text"]',
+			) as NodeListOf<HTMLInputElement> | null
 
-			$lastTurboBody = $turboBody
-			initTurboObserver($turboBody)
-		} else if (Observers.turbo.running) {
-			dispooseAll()
+			if (dialogTextInputs) {
+				for (const $input of dialogTextInputs) {
+					if ($input.autofocus) {
+						$input.focus()
+						return
+					}
+				}
+
+				// If we don't find an autofocus input, try to focus the first one
+				dialogTextInputs[0]?.focus()
+			}
 		}
+
+		const handleWkofDialogChange = ($el: HTMLElement) => {
+			const dialogRefCount = Number.parseInt(getAttrVal($el, DIALOG_REF_COUNT_ATTR) || '0')
+			const isEnabled = state.isEnabled(State.WK_OPEN_FRAMEWORK)
+
+			if (dialogRefCount && isEnabled) {
+				state.disable(State.WK_OPEN_FRAMEWORK)
+				tryFocusDialogInput($el)
+			}
+
+			if (!dialogRefCount && !isEnabled) {
+				state.enable(State.WK_OPEN_FRAMEWORK)
+				inputManager.focus()
+			}
+		}
+
+		Observers.wkofDiaglogBg.init(
+			$wkofDialogBg,
+			({ attributeName, target }) => {
+				if (!(attributeName && isElement(target))) return
+
+				handleWkofDialogChange(target)
+			},
+			{ attributeFilter: ['refcnt'] },
+		)
+
+		handleWkofDialogChange($wkofDialogBg)
 	}
 
-	setInterval(tryRun, 200)
-	tryRun()
+	const wkFocusRunner = (() => {
+		let $lastTurboBody: HTMLElement | null = null
+		let $lastWkofDialogBg: HTMLElement | null = null
+
+		return ($turboBody: HTMLElement | null, $wkofDialogBg: HTMLElement | null) => {
+			if ($turboBody && (!Observers.turbo.running || $lastTurboBody !== $turboBody))
+				initTurboObserver($turboBody)
+
+			if (!$turboBody && Observers.turbo.running) disposeAll()
+
+			if ($wkofDialogBg && (!Observers.wkofDiaglogBg.running || $lastWkofDialogBg !== $wkofDialogBg))
+				initWkofDialogObserver($wkofDialogBg)
+
+			if (!$wkofDialogBg && Observers.wkofDiaglogBg.running) Observers.wkofDiaglogBg.dispose()
+
+			$lastTurboBody = $turboBody
+			$lastWkofDialogBg = $wkofDialogBg
+		}
+	})()
+
+	const updateRunner = () => {
+		const $turboBody = document.getElementById('turbo-body')
+		const $wkofDialogBg = document.getElementById('wkofs_bkgd')
+
+		wkFocusRunner($turboBody, $wkofDialogBg)
+	}
+
+	setInterval(updateRunner, 200)
+	updateRunner()
 })()
