@@ -1,13 +1,13 @@
 // ==UserScript==
-// @author Brian Frichette
 // @name WaniKani Keyboard Focus
+// @author Brian Frichette
 // @description Keeps keyboard focus on the lesson input field
 // @license MIT
 // @match https://www.wanikani.com/subjects/*
 // @match https://www.wanikani.com/subject-lessons/*
 // @run-at document-idle
 // @supportURL https://github.com/bfricka/wk-keyboard-focus
-// @version 1.0.0
+// @version 1.2.1
 // ==/UserScript==
 
 type Listener = (ev: Event) => void
@@ -61,6 +61,7 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 
 	class WKObserver {
 		#cb: WKMutationCallback = noop
+		#cleanup = noop
 		#isRunning = false
 		#observer = new MutationObserver((items) => {
 			for (const item of items) {
@@ -76,10 +77,17 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 			this.#cb = noop
 			this.#observer.disconnect()
 			this.#isRunning = false
+			this.#cleanup()
 			return this
 		}
 
-		init = ($el: HTMLElement, cb: WKMutationCallback, opts?: MutationObserverInit) => {
+		init = (
+			$el: HTMLElement,
+			cb: WKMutationCallback,
+			opts?: MutationObserverInit,
+			cleanup = noop,
+		) => {
+			this.#cleanup = cleanup
 			this.dispose()
 			this.#cb = cb
 			this.#observer.observe($el, opts)
@@ -207,16 +215,13 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
     .wk-focus__btn.wk-focus__fade {
       opacity: 0.5;
     }
-    
+
     .wk-focus__glasses-icon {
       stroke: #111;
     }
 
-    .quiz-input__input-container[correct=false] .wk-focus__glasses-icon {
-      stroke: #fff;
-    }
-
-    .quiz-input__input-container[correct=true] .wk-focus__glasses-icon {
+    .quiz-input__input-container[correct=true] .wk-focus__glasses-icon,
+		.quiz-input__input-container[correct=false] .wk-focus__glasses-icon {
       stroke: #fff;
     }`
 
@@ -318,8 +323,6 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 				log('Modal visible. Trying to find autofocus input.')
 				state.disable(State.MODAL)
 				initInputObserverAndFocus()
-				// const $modalInput = $el.querySelector('input.wk-form__input') as HTMLInputElement | null
-				// $modalInput?.focus()
 			},
 			{ attributeFilter: ['hidden'] },
 		)
@@ -419,6 +422,10 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 				}
 			},
 			SUBTREE,
+			() => {
+				// We can be disposed before the removal observer fires, so we reset on dispose
+				state.enable(State.LESSON_MODAL)
+			},
 		)
 	}
 
@@ -513,7 +520,7 @@ type WKMutationCallback = (item: MutationRecord) => boolean | undefined | void
 
 	const initTurboObserver = ($turboBody: HTMLElement) => {
 		disposeAll()
-		// FIXME: Maybe interval watch for user input??
+
 		const updateUserInput = () => {
 			// Main input element for answers
 			inputManager.update(document.getElementById('user-response') as HTMLInputElement | null)
